@@ -235,6 +235,11 @@ class SentencePieceProcessor {
   // Simple API.
   //
   // Given a UTF8 input, encodes it into a sequence of sentence pieces.
+
+  // RLE Helper Functions
+  virtual std::vector<int> _expand_from_ids(const std::vector<int> ids) const;
+  virtual std::vector<int> expand_from_ids(const std::vector<int> ids) const;
+
   virtual util::Status Encode(absl::string_view input,
                               std::vector<std::string> *pieces) const;
 

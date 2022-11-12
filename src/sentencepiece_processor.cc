@@ -221,15 +221,193 @@ util::Status SentencePieceProcessor::LoadVocabulary(absl::string_view filename,
 
 //////////////////////////////////////////////////////////////
 // Simple API.
+//////////////////////////////////////////////////////////////
+std::vector<int> extract_each_digit(int x)
+{
+    std::vector<int> digits;
+    while(x>0)
+    {
+      digits.push_back(x%10);
+      x/=10;
+    }
+    std::reverse(digits.begin(), digits.end());
+    return digits;
+}
+
+void rle(std::vector<std::string> pieces, std::vector<std::string> *tokens){
+        int n = pieces.size();
+
+        for (int i = 0; i < n; i++) {
+    
+            int count = 1;
+            while (i < n - 1 && pieces[i] == pieces[i + 1]) {
+                count++;
+                i++;
+            }
+            // Word and its Count
+            if (count > 1){
+
+              tokens->emplace_back(pieces[i]);
+              tokens->emplace_back("(#startrepeat)");
+              
+              //tokens->emplace_back("xx");
+              
+              std::vector<int> digits = extract_each_digit(count) ;
+              for (auto d: digits){
+                // Guarantee that these are digit symbols
+                tokens->emplace_back(std::to_string(d)) ;
+              }
+
+              tokens->emplace_back("(#endrepeat)");
+
+            }
+            else{
+              // 
+              tokens->emplace_back(pieces[i]);
+            }
+            
+        }
+
+    }
+
+int VectorToInt(std::vector<int> v)
+{
+    std::reverse(v.begin(), v.end());
+    int decimal = 1;
+    int total = 0;
+
+    for (auto& it : v)
+    {
+        total += it * decimal;
+        decimal *= 10;
+    }
+    
+    return total;
+}
+
+std::vector<std::size_t> locate_all( const std::vector<absl::string_view>& seq, const std::string& what )
+{
+    std::vector<std::size_t> result ;
+    for( std::size_t i = 0 ; i < seq.size() ; ++i ) if( seq[i] == what ) result.push_back(i) ;
+    return result ;
+}
+
+std::vector<std::string> _expand_from_pieces(std::vector<std::string> pieces){
+
+  //std::cout<<pieces<<std::endl;
+
+  // Just look for the control symbol
+  auto it1 = std::find(pieces.begin(), pieces.end(), "(#startrepeat)");
+  //std::cout<<"----------------";
+
+  auto it2 = std::find(pieces.begin(), pieces.end(), "(#endrepeat)");
+  int start_position = it1 - pieces.begin();
+  int end_position = it2 - pieces.begin();
+  std::string repeat_token = pieces[start_position-1];
+
+  //std::cout<<repeat_token<<std::endl;
+  std::vector<int> num;
+
+  if (it1!= pieces.end() and it2!= pieces.end()){
+
+    int j = start_position + 1;
+    while (j!=end_position){
+      num.push_back(std::stoi(std::string(pieces[j])));
+      j++;
+    }
+    int count = VectorToInt(num) - 1;
+    //std::cout<<count<<std::endl;
+    pieces.erase(it1, it2+1);
+    pieces.insert(it1, count, repeat_token);
+  }
+  return pieces;
+}
+
+std::vector<std::string> expand_from_pieces(std::vector<std::string> pieces){
+  while (std::find(pieces.begin(), pieces.end(), "(#startrepeat)") != pieces.end()){
+    pieces = _expand_from_pieces(pieces);
+  }
+  return pieces;
+}
+
+std::vector<int> SentencePieceProcessor::_expand_from_ids(const std::vector<int> ids) const {
+
+  // Just look for the control symbol
+  auto it1 = std::find(ids.begin(), ids.end(), model_->PieceToId("(#startrepeat)"));
+  int start_position = it1 - ids.begin();
+  auto it2 = std::find(ids.begin(), ids.end(), model_->PieceToId("(#endrepeat)"));
+  int end_position = it2 - ids.begin();
+
+  // // Erase the End Token
+  // ids.erase( it2 );
+
+  std::vector<int> num;
+  std::vector<int> new_ids;
+
+  int p = 0;
+  while (p != start_position){
+    new_ids.push_back(ids[p]);
+    p++;
+  }
+
+  // Get the Symbol
+  int symbol = *(it1-1);
+  it1 += 1;
+
+  // Get the Count
+  while (it1 != it2){
+    num.push_back( std::stoi(model_->IdToPiece(*it1)) );
+    it1 += 1;
+  }
+  int count = VectorToInt(num);
+  //std::cout<<num<<std::endl;
+
+  // Update the IDs
+  int i = 0;
+  while (i < count){
+    new_ids.push_back(symbol);
+    i++;
+  }
+
+  // Append the Suffix
+  int s = end_position+1;
+  while(s != ids.size()){
+    new_ids.push_back(ids[s]);
+    s++;
+  }
+  
+  return new_ids;
+}
+
+std::vector<int> SentencePieceProcessor::expand_from_ids(const std::vector<int> ids) const {
+
+  std::vector<int> new_ids(ids);
+  while (std::find(new_ids.begin(), new_ids.end(), model_->PieceToId("(#startrepeat)")) != new_ids.end()){
+    new_ids = _expand_from_ids(new_ids);
+  }
+  return new_ids;
+}
+
+/////////////////////////////////////////////////////////////
+// Simple API.
 util::Status SentencePieceProcessor::Encode(
     absl::string_view input, std::vector<std::string> *pieces) const {
   CHECK_OR_RETURN_STATUS_STL(pieces);
 
+  // std::cout<<"Encode 1"<<std::endl;
+  // std::cout<<input<<std::endl;
+  // std::cout<<"Encode 1"<<std::endl;
+
   SentencePieceText spt;
   RETURN_IF_ERROR(Encode(input, &spt));
+
+  std::vector<std::string> temp_pieces;
+
   for (const auto &sp : spt.pieces()) {
-    pieces->emplace_back(sp.piece());
+    temp_pieces.push_back(sp.piece());
   }
+
+  rle(temp_pieces, pieces);
 
   return util::OkStatus();
 }
@@ -238,10 +416,23 @@ util::Status SentencePieceProcessor::Encode(absl::string_view input,
                                             std::vector<int> *ids) const {
   CHECK_OR_RETURN_STATUS_STL(ids);
 
+  // std::cout<<"Encode 2"<<std::endl;
+  // std::cout<<input<<std::endl;
+  // std::cout<<"Encode 2"<<std::endl;
+
   SentencePieceText spt;
+
   RETURN_IF_ERROR(Encode(input, &spt));
+  std::vector<std::string> temp_pieces;
   for (const auto &sp : spt.pieces()) {
-    ids->emplace_back(sp.id());
+    temp_pieces.push_back(sp.piece());
+  }
+
+  std::vector<std::string> pieces;
+  rle(temp_pieces, &pieces);
+  for (const auto piece: pieces) {
+   
+    ids->emplace_back(model_->PieceToId(piece));
   }
 
   return util::OkStatus();
@@ -251,8 +442,10 @@ util::Status SentencePieceProcessor::Decode(
     const std::vector<std::string> &pieces, std::string *detokenized) const {
   CHECK_OR_RETURN_STATUS_STL(detokenized);
 
+  auto new_pieces = expand_from_pieces(pieces);
+
   SentencePieceText spt;
-  RETURN_IF_ERROR(Decode(pieces, &spt));
+  RETURN_IF_ERROR(Decode(new_pieces, &spt));
   *detokenized = std::move(spt.text());
 
   return util::OkStatus();
@@ -262,8 +455,9 @@ util::Status SentencePieceProcessor::Decode(const std::vector<int> &ids,
                                             std::string *detokenized) const {
   CHECK_OR_RETURN_STATUS_STL(detokenized);
 
+  auto new_ids = expand_from_ids(ids);
   SentencePieceText spt;
-  RETURN_IF_ERROR(Decode(ids, &spt));
+  RETURN_IF_ERROR(Decode(new_ids, &spt));
   *detokenized = std::move(spt.text());
 
   return util::OkStatus();
