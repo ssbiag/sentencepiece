@@ -359,7 +359,7 @@ std::vector<int> SentencePieceProcessor::_expand_from_ids(const std::vector<int>
     num.push_back( std::stoi(model_->IdToPiece(*it1)) );
     it1 += 1;
   }
-  int count = VectorToInt(num);
+  int count = VectorToInt(num) -1;
   //std::cout<<num<<std::endl;
 
   // Update the IDs
